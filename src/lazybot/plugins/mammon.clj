@@ -1,5 +1,5 @@
 ;;; Written by Paul L. Snyder <paul@pataprogramming.com>
-;;; Some code borrowed from lazybot.plugins.karma
+;;; Built from a core of code borrowed from lazybot.plugins.karma
 ;;; by Michael D. Ivey <ivey@gweezlebur.com>
 ;;; Licensed under the EPL
 
@@ -58,23 +58,23 @@
 (defn- get-ownership
   [nick server channel stock]
   (let [stock (.toLowerCase stock)
-        user-map (fetch :shares
+        owner-maps (fetch :shares
                         :where (keyed [server channel stock]))]
-    (println "got" user-map "for server" server "channel" channel
+    (println "got" owner-maps "for server" server "channel" channel
              "stock" stock)
-    user-map))
+    owner-maps))
 
 (defn- get-stocks
   [nick server channel]
-  (let [user-map (fetch :shares
-                        :where (key-attrs nick server channel))]
-    user-map))
+  (let [stock-maps (fetch :shares
+                          :where (key-attrs nick server channel))]
+    stock-maps))
 
 (defn- get-shares
   [nick server channel stock]
-  (let [user-map (fetch-one :shares
+  (let [stock-map (fetch-one :shares
                             :where (key-attrs nick server channel stock))]
-    (get user-map :shares 0)))
+    (get stock-map :shares 0)))
 
 (def limit (ref {}))
 
@@ -83,27 +83,19 @@
     (.schedule scheduler task
                5 TimeUnit/MINUTES)))
 
-;; TODO: mongo has atomic inc/dec commands - we should use those
 (defn- change-shares
   [stock new-shares {:keys [^String nick com bot channel] :as com-m}]
   (let [new-shares (if (< new-shares 0) 0 new-shares)
-        [msg apply]
-        (dosync
-         (let [current (get-in @limit [nick stock])]
-           (cond
-            (.equalsIgnoreCase nick stock) ["Buying shares in yourself is insider trading."]
-            ;(= current 3) ["You'll have to wait before your next transaction."]
-            (= current new-shares) ["No shares were bought or sold.."]
-            :else [;(str (get-in @bot [:config :prefix-arrow]) new-shares)
-                   (str nick " now owns " new-shares " shares of " stock ".")
-                   (alter limit update-in [nick stock] (fnil inc 0))])))]
-    (when apply
-      (set-shares nick (:server @com) channel stock new-shares)
-      ;(schedule #(dosync (alter limit update-in [nick stock] dec)))
-      )
+        msg
+        (cond
+         (.equalsIgnoreCase nick stock) "Buying shares in yourself is insider trading."
+         :else (do
+                 (set-shares nick (:server @com) channel stock new-shares)
+                 (str nick " now owns " new-shares " shares of " stock ".")))]
     (send-message com-m msg)))
 
 (defn- fmt-share
+  ;; FIXME: Fix calling convention
   [{:keys [stock shares channel]} server & fmt-price?]
   (let [base (str shares " shares of " stock)]
     (if fmt-price?
@@ -130,11 +122,9 @@
 
 (defn total-value
   [stocks]
-  (reduce +
-          (map #(* (:shares %)
-                   (get-price (:stock %) (:server %) (:channel %)))
-               stocks)))
-
+  (reduce + (map #(* (:shares %)
+                     (get-price (:stock %) (:server %) (:channel %)))
+                 stocks)))
 
 (def print-price
   (fn [{:keys [nick com channel args] :as com-m}]
@@ -164,45 +154,39 @@
                                " owned by " nick "."))))
         (print-portfolio com-m)))))
 
+
 (def print-portfolio
   (fn [{:keys [nick com bot channel args] :as com-m}]
     (let [server (:server @com)]
-      (send-message com-m
-                    (let [stocks (get-stocks nick server channel)]
-                      (if (> (count stocks) 0)
-                        (str nick " owns "  (oxford-list (map #(fmt-share % server true) stocks))
-                             " (totalling " (fmt-currency (total-value stocks) channel) ").")
-                        (str nick " does not own any shares.")))))))
+      (send-message
+       com-m
+       (let [stocks (get-stocks nick server channel)]
+         (if (> (count stocks) 0)
+           (str
+            nick " owns "
+            (oxford-list (map #(fmt-share % server true) stocks))
+            " (totalling "
+            (fmt-currency (total-value stocks) channel) ").")
+           (str nick " does not own any shares.")))))))
 
 
 (def print-ownership
   (fn [{:keys [nick com bot channel args] :as com-m}]
     (let [stock (or (first args) nick)]
-      (send-message com-m
-                    (let [owners (get-ownership nick (:server @com) channel stock)]
-                      (if (> (count owners) 0)
-                        (str "The users who own shares in " stock " are "
-                             (oxford-list
-                              (map fmt-owner
-                                   (reverse (sort-by :shares owners))))
-                             ".")
-                        (str "No users own shares in " stock ".")))))))
+      (send-message
+       com-m
+       (let [owners (get-ownership nick (:server @com) channel stock)]
+         (if (> (count owners) 0)
+           (str "The users who own shares in " stock " are "
+                (oxford-list
+                 (map fmt-owner (reverse (sort-by :shares owners))))
+                ".")
+           (str "No users own shares in " stock ".")))))))
 
 (def buy (shares-fn #(+ % 100)))
 (def sell (shares-fn #(- % 100)))
 
 (defplugin
-  (:hook :on-message
-         (fn [{:keys [message] :as com-m}]
-           (let [[_ direction stock]
-                 (re-find #"^\((buy|sell|portfolio|ownership) (.+)\)(\s*;.*)?$" message)]
-             (when stock
-               ((case direction
-                  "buy" (shares-fn buy)
-                  "sell" (shares-fn sell)
-                  "portfolio" print-shares
-                  "ownership" print-ownership)
-                (merge com-m {:args [stock]}))))))
   (:cmd
    "Checks the shares of a stock that you own."
    #{"shares" "stock" "owned"} print-shares)
