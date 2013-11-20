@@ -91,13 +91,13 @@
          (.equalsIgnoreCase nick stock) "Buying shares in yourself is insider trading."
          :else (do
                  (set-shares nick (:server @com) channel stock new-shares)
-                 (str nick " now owns " new-shares " shares of " stock ".")))]
+                 (str nick " now owns " new-shares " shares of \u00a7" stock ".")))]
     (send-message com-m msg)))
 
 (defn- fmt-share
   ;; FIXME: Fix calling convention
   [{:keys [stock shares channel]} server & fmt-price?]
-  (let [base (str shares " shares of " stock)]
+  (let [base (str shares " shares of \u00a7" stock)]
     (if fmt-price?
       (let [price (get-price stock server channel)]
         (str base " at " (fmt-currency price channel)))
@@ -105,7 +105,7 @@
 
 (defn- fmt-owner
   [{:keys [nick shares]}]
-  (str nick " (" shares ")"))
+  (str "\u00a7" nick " (" shares ")"))
 
 (defn shares-fn
   "Create a plugin command function that applies f to the stock owned by the user specified in args."
@@ -132,7 +132,7 @@
       (if stock
         (send-message com-m
                       (if-let [price (get-price stock (:server @com) channel)]
-                        (str stock " is currently priced at "
+                        (str "\u00a7" stock " is currently priced at "
                              (fmt-currency price channel) ".")
                         (str stock " is not listed on the " channel " exchange.")))
         (send-message com-m
@@ -147,10 +147,10 @@
                       (let [shares (get-shares nick (:server @com) channel stock)
                             price  (get-price stock (:server @com) channel)]
                         (if shares
-                          (str nick " owns " shares " shares of " stock
+                          (str nick " owns " shares " shares of \u00a7" stock
                                " at " (fmt-currency price channel)
                                " (" (fmt-currency (* shares price) channel) " total).")
-                          (str "I have no record for shares of " stock
+                          (str "I have no record for shares of \u00a7" stock
                                " owned by " nick "."))))
         (print-portfolio com-m)))))
 
@@ -177,7 +177,8 @@
        com-m
        (let [owners (get-ownership nick (:server @com) channel stock)]
          (if (> (count owners) 0)
-           (str "The users who own shares in " stock " are "
+           ;; FIXME: Grammar case for single user
+           (str "The users who own shares in \u00a7" stock " are "
                 (oxford-list
                  (map fmt-owner (reverse (sort-by :shares owners))))
                 ".")
