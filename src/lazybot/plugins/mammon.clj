@@ -108,7 +108,7 @@
   (str nick " (" shares ")"))
 
 (defn shares-fn
-  "Create a plugin command function that applies f to the stock owned bythe user specified in args."
+  "Create a plugin command function that applies f to the stock owned by the user specified in args."
   [f]
   (fn [{:keys [nick com channel args] :as com-m}]
     (let [stock (first args)
@@ -197,12 +197,12 @@
    "Checks all of the stocks that you own."
    #{"portfolio"} print-portfolio)
   (:cmd
-   "Increases the karma of the person you specify."
+   "Purchases shares in the stock you specify."
    #{"buy"} buy)
   (:cmd
-   "Decreases the karma of the person you specify."
+   "Sell shares of the person you specify."
    #{"sell"} sell)
   (:cmd
-   "Shows the shares owned in the given nick."
+   "Shows the shares owned in the given stock."
    #{"ownership" "owners" "owner" "own"} print-ownership)
   (:indexes [[:server :channel :nick]]))
