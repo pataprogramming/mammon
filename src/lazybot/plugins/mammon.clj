@@ -94,6 +94,10 @@
                  (str nick " now owns " new-shares " shares of \u00a7" stock ".")))]
     (send-message com-m msg)))
 
+(defn fmt-currency
+  [amount channel]
+  (str "\u20b1" (format "%.2f" amount)))
+
 (defn- fmt-share
   ;; FIXME: Fix calling convention
   [{:keys [stock shares channel]} server & fmt-price?]
@@ -116,15 +120,24 @@
           new-shares (f shares)]
       (change-shares stock new-shares com-m))))
 
-(defn fmt-currency
-  [amount channel]
-  (str "\u20b1" (format "%.2f" amount)))
-
 (defn total-value
   [stocks]
   (reduce + (map #(* (:shares %)
-                     (get-price (:stock %) (:server %) (:channel %)))
-                 stocks)))
+                     (get-price (:stock %) (:server %) (:channel %))) stocks)))
+
+(def print-portfolio
+  (fn [{:keys [nick com bot channel args] :as com-m}]
+    (let [server (:server @com)]
+      (send-message
+       com-m
+       (let [stocks (get-stocks nick server channel)]
+         (if (> (count stocks) 0)
+           (str
+            nick " owns "
+            (oxford-list (map #(fmt-share % server true) stocks))
+            " (totalling "
+            (fmt-currency (total-value stocks) channel) ").")
+           (str nick " does not own any shares.")))))))
 
 (def print-price
   (fn [{:keys [nick com channel args] :as com-m}]
@@ -155,21 +168,6 @@
         (print-portfolio com-m)))))
 
 
-(def print-portfolio
-  (fn [{:keys [nick com bot channel args] :as com-m}]
-    (let [server (:server @com)]
-      (send-message
-       com-m
-       (let [stocks (get-stocks nick server channel)]
-         (if (> (count stocks) 0)
-           (str
-            nick " owns "
-            (oxford-list (map #(fmt-share % server true) stocks))
-            " (totalling "
-            (fmt-currency (total-value stocks) channel) ").")
-           (str nick " does not own any shares.")))))))
-
-
 (def print-ownership
   (fn [{:keys [nick com bot channel args] :as com-m}]
     (let [stock (or (first args) nick)]
@@ -186,6 +184,11 @@
 
 (def buy (shares-fn #(+ % 100)))
 (def sell (shares-fn #(- % 100)))
+
+;; (defn short
+;;   [{:keys nick :as com-m}]
+;;   (send-message com-m "You don't have a margin account!"))
+
 
 (defplugin
   (:cmd
