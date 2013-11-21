@@ -88,10 +88,12 @@
   (let [new-shares (if (< new-shares 0) 0 new-shares)
         msg
         (cond
-         (.equalsIgnoreCase nick stock) "Buying shares in yourself is insider trading."
-         :else (do
-                 (set-shares nick (:server @com) channel stock new-shares)
-                 (str nick " now owns " new-shares " shares of \u00a7" stock ".")))]
+         (.equalsIgnoreCase nick stock)
+         (str nick ": Buying shares in yourself is insider trading.")
+         :else
+         (do
+           (set-shares nick (:server @com) channel stock new-shares)
+           (str nick ": you now own " new-shares " shares of \u00a7" stock ".")))]
     (send-message com-m msg)))
 
 (defn fmt-currency
@@ -133,7 +135,7 @@
        (let [stocks (get-stocks nick server channel)]
          (if (> (count stocks) 0)
            (str
-            nick " owns "
+            nick ": you own "
             (oxford-list (map #(fmt-share % server true) stocks))
             " (totalling "
             (fmt-currency (total-value stocks) channel) ").")
@@ -143,13 +145,16 @@
   (fn [{:keys [nick com channel args] :as com-m}]
     (let [stock (first args)]
       (if stock
-        (send-message com-m
-                      (if-let [price (get-price stock (:server @com) channel)]
-                        (str "\u00a7" stock " is currently priced at "
-                             (fmt-currency price channel) ".")
-                        (str stock " is not listed on the " channel " exchange.")))
-        (send-message com-m
-                      (str "No stock symbol specified."))))))
+        (send-message
+         com-m
+         (if-let [price (get-price stock (:server @com) channel)]
+           (str nick ": \u00a7" stock " is currently priced at "
+                (fmt-currency price channel) ".")
+           (str nick ": " stock " is not listed on the "
+                channel " exchange.")))
+        (send-message
+         com-m
+         (str nick ": No stock symbol specified."))))))
 
 
 (def print-shares
@@ -160,10 +165,10 @@
                       (let [shares (get-shares nick (:server @com) channel stock)
                             price  (get-price stock (:server @com) channel)]
                         (if shares
-                          (str nick " owns " shares " shares of \u00a7" stock
+                          (str nick ": you own " shares " shares of \u00a7" stock
                                " at " (fmt-currency price channel)
                                " (" (fmt-currency (* shares price) channel) " total).")
-                          (str "I have no record for shares of \u00a7" stock
+                          (str nick ": I have no record for shares of \u00a7" stock
                                " owned by " nick "."))))
         (print-portfolio com-m)))))
 
@@ -176,18 +181,18 @@
        (let [owners (get-ownership nick (:server @com) channel stock)]
          (if (> (count owners) 0)
            ;; FIXME: Grammar case for single user
-           (str "The users who own shares in \u00a7" stock " are "
+           (str nick ": The users who own shares in \u00a7" stock " are "
                 (oxford-list
                  (map fmt-owner (reverse (sort-by :shares owners))))
                 ".")
-           (str "No users own shares in " stock ".")))))))
+           (str nick ": No users own shares in " stock ".")))))))
 
 (def buy (shares-fn #(+ % 100)))
 (def sell (shares-fn #(- % 100)))
 
-;; (defn short
-;;   [{:keys nick :as com-m}]
-;;   (send-message com-m "You don't have a margin account!"))
+(def margin-order
+  (fn [{:keys [nick] :as  com-m}]
+    (send-message com-m (str nick ": You don't have a margin account!"))))
 
 
 (defplugin
@@ -206,6 +211,9 @@
   (:cmd
    "Sell shares of the person you specify."
    #{"sell"} sell)
+  (:cmd
+   "Issue a sell-short order. (Unimplemented)"
+   #{"short"} margin-order)
   (:cmd
    "Shows the shares owned in the given stock."
    #{"ownership" "owners" "owner" "own"} print-ownership)
