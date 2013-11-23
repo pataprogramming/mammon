@@ -19,21 +19,21 @@
     (str (s/join ", " (butlast s)) " and " (last s))))
 
 (defn fmt-currency
-  [amount channel]
+  [amount]
   (str "\u20b1" (format "%.2f" amount)))
 
 (defn- key-attrs
-  ([nick server channel]
+  ([nick server]
      (let [nick  (.toLowerCase nick)]
-       (keyed [nick server channel])))
-  ([nick server channel stock]
+       (keyed [nick server])))
+  ([nick server stock]
      (let [nick  (.toLowerCase nick)
            stock (.toLowerCase stock)]
-       (keyed [nick server channel stock ]))))
+       (keyed [nick server stock ]))))
 
 (defn- set-shares
-  [nick server channel stock shares]
-  (let [attrs (key-attrs nick server channel stock)]
+  [nick server stock shares]
+  (let [attrs (key-attrs nick server stock)]
     (if (= shares 0)
       (destroy! :shares attrs)
       (update! :shares attrs (assoc attrs :shares shares)))))
@@ -43,58 +43,58 @@
   (+ 1 (/ (rand-int 900) 100.0)))
 
 (defn- set-price
-  [com-m nick server channel price]
-  (let [attrs (key-attrs nick server channel)]
+  [com-m nick server price]
+  (let [attrs (key-attrs nick server)]
     (if (= price 0)
       (destroy! :price attrs)
       (update! :price attrs (assoc attrs :price price)))))
 
-(defn- delist-price
-  [com-m nick server channel]
-  (set-price com-m nick server channel 0))
+(defn- delist-stock
+  [com-m nick server]
+  (println "delisting: " (destroy! :shares {:stock nick :server server}))
+  (set-price com-m nick server 0))
 
 (defn- get-price
-  [{:keys [com] :as com-m} nick server channel]
+  [{:keys [com] :as com-m} nick server]
   (let [user-map (fetch-one :price
-                            :where (key-attrs nick server channel))
+                            :where (key-attrs nick server))
         db-price (get user-map :price 0.0)
         _ (println "Got price " db-price " for " nick)
         price    (if (= db-price 0.0)
                    (let [ipo-price (rand-price)]
-                     (set-price com-m nick (:server @com) channel ipo-price)
+                     (set-price com-m nick (:server @com) ipo-price)
                      (send-message com-m
                                    (str "New IPO: " nick " at "
-                                        (fmt-currency ipo-price channel)))
+                                        (fmt-currency ipo-price)))
                      ipo-price)
                    db-price)]
     price))
 
 (defn- get-market
-  [server channel]
+  [server]
   (let [price-maps (fetch :price
-                          :where (keyed [server channel]))]
-    (println "got" price-maps "for server" server "channel" channel)
+                          :where (keyed [server]))]
+    (println "got" price-maps "for server" server)
     price-maps))
 
 (defn- get-ownership
-  [nick server channel stock]
+  [nick server stock]
   (let [stock (.toLowerCase stock)
         owner-maps (fetch :shares
-                        :where (keyed [server channel stock]))]
-    (println "got" owner-maps "for server" server "channel" channel
-             "stock" stock)
+                        :where (keyed [server stock]))]
+    (println "got" owner-maps "for server" server "stock" stock)
     owner-maps))
 
 (defn- get-stocks
-  [nick server channel]
+  [nick server]
   (let [stock-maps (fetch :shares
-                          :where (key-attrs nick server channel))]
+                          :where (key-attrs nick server))]
     stock-maps))
 
 (defn- get-shares
-  [nick server channel stock]
+  [nick server stock]
   (let [stock-map (fetch-one :shares
-                            :where (key-attrs nick server channel stock))]
+                            :where (key-attrs nick server stock))]
     (get stock-map :shares 0)))
 
 (def limit (ref {}))
@@ -105,25 +105,25 @@
                5 TimeUnit/MINUTES)))
 
 (defn- change-shares
-  [stock new-shares {:keys [^String nick com bot channel] :as com-m}]
+  [stock new-shares {:keys [^String nick com bot] :as com-m}]
   (let [msg
         (cond
          (.equalsIgnoreCase nick stock)
          (str nick ": Buying shares in yourself is insider trading.")
          :else
          (do
-           (set-shares nick (:server @com) channel stock new-shares)
+           (set-shares nick (:server @com) stock new-shares)
            (str nick ": You now own " new-shares " shares of \u00a7" stock
-                " at " (fmt-currency (get-price com-m stock (:server @com) channel) channel) ".")))]
+                " at " (fmt-currency (get-price com-m stock (:server @com))) ".")))]
     (send-message com-m msg)))
 
 (defn- fmt-share
   ;; FIXME: Fix calling convention
-  [{:keys [stock shares channel] :as com-m} server & fmt-price?]
+  [{:keys [stock shares] :as com-m} server & fmt-price?]
   (let [base (str shares " shares of \u00a7" stock)]
     (if fmt-price?
-      (let [price (get-price com-m stock server channel)]
-        (str base " at " (fmt-currency price channel)))
+      (let [price (get-price com-m stock server)]
+        (str base " at " (fmt-currency price)))
       base)))
 
 (defn- fmt-owner
@@ -133,76 +133,75 @@
 (defn shares-fn
   "Create a plugin command function that applies f to the stock owned by the user specified in args."
   [f]
-  (fn [{:keys [nick com channel args] :as com-m}]
+  (fn [{:keys [nick com args] :as com-m}]
     (let [stock (first args)
-          shares (get-shares nick (:server @com) channel stock)
+          shares (get-shares nick (:server @com) stock)
           new-shares (f shares)]
-      (let [old-price   (get-price com-m stock (:server @com) channel)
+      (let [old-price   (get-price com-m stock (:server @com))
             price-delta (+ 0.01 (/ (rand-int 100) 100.0))]
         (cond
-         (< new-shares shares) (set-price com-m stock (:server @com) channel
+         (< new-shares shares) (set-price com-m stock (:server @com)
                                           (max 0.01 (- old-price price-delta)))
-         (> new-shares shares) (set-price com-m stock (:server @com) channel
+         (> new-shares shares) (set-price com-m stock (:server @com)
                                           (max 0.01 (+ old-price price-delta)))))
       (change-shares stock new-shares com-m))))
 
 (defn total-value
   [com-m stocks]
   (reduce + (map #(* (:shares %)
-                     (get-price com-m (:stock %) (:server %) (:channel %))) stocks)))
+                     (get-price com-m (:stock %) (:server %))) stocks)))
 
 (def print-portfolio
-  (fn [{:keys [nick com bot channel args] :as com-m}]
+  (fn [{:keys [nick com bot args] :as com-m}]
     (let [server (:server @com)]
       (send-message
        com-m
-       (let [stocks (get-stocks nick server channel)]
+       (let [stocks (get-stocks nick server)]
          (if (> (count stocks) 0)
            (str
             nick ": You own "
             (oxford-list (map #(fmt-share % server true) stocks))
             " (totalling "
-            (fmt-currency (total-value com-m stocks) channel) ").")
+            (fmt-currency (total-value com-m stocks)) ").")
            (str nick " does not own any shares.")))))))
 
 (def print-price
-  (fn [{:keys [nick com channel args] :as com-m}]
+  (fn [{:keys [nick com args] :as com-m}]
     (let [stock (first args)]
       (if stock
         (send-message
          com-m
-         (if-let [price (get-price com-m stock (:server @com) channel)]
+         (if-let [price (get-price com-m stock (:server @com))]
            (str nick ": \u00a7" stock " is currently priced at "
-                (fmt-currency price channel) ".")
-           (str nick ": " stock " is not listed on the "
-                channel " exchange.")))
+                (fmt-currency price) ".")
+           (str nick ": " stock " is not listed on the exchange.")))
         (send-message
          com-m
          (str nick ": No stock symbol specified."))))))
 
 
 (def print-shares
-  (fn [{:keys [nick com channel args] :as com-m}]
+  (fn [{:keys [nick com args] :as com-m}]
     (let [stock (first args)]
       (if stock
         (send-message com-m
-                      (let [shares (get-shares nick (:server @com) channel stock)
-                            price  (get-price com-m stock (:server @com) channel)]
+                      (let [shares (get-shares nick (:server @com) stock)
+                            price  (get-price com-m stock (:server @com))]
                         (if shares
                           (str nick ": You own " shares " shares of \u00a7" stock
-                               " at " (fmt-currency price channel)
-                               " (" (fmt-currency (* shares price) channel) " total).")
+                               " at " (fmt-currency price)
+                               " (" (fmt-currency (* shares price)) " total).")
                           (str nick ": I have no record for shares of \u00a7" stock
                                " owned by " nick "."))))
         (print-portfolio com-m)))))
 
 
 (def print-ownership
-  (fn [{:keys [nick com bot channel args] :as com-m}]
+  (fn [{:keys [nick com bot args] :as com-m}]
     (let [stock (or (first args) nick)]
       (send-message
        com-m
-       (let [owners (get-ownership nick (:server @com) channel stock)]
+       (let [owners (get-ownership nick (:server @com) stock)]
          (if (> (count owners) 0)
            ;; FIXME: Grammar case for single user
            (str nick ": The users who own shares in \u00a7" stock " are "
@@ -212,15 +211,15 @@
            (str nick ": No users own shares in \u00a7" stock ".")))))))
 
 (def print-ticker
-  (fn [{:keys [nick com bot channel args] :as com-m}]
-    (let [prices (get-market (:server @com) channel)]
+  (fn [{:keys [nick com bot args] :as com-m}]
+    (let [prices (get-market (:server @com))]
       (println (str "number returned: " (count prices)))
-      (println (map #(fmt-currency (:price %) channel) prices))
+      (println (map #(fmt-currency (:price %)) prices))
       (send-message
        com-m
        (str "Current market values: "
             (s/join "; " (map #(str "\u00a7" (:nick %) ":"
-                                    (fmt-currency (:price %) channel))
+                                    (fmt-currency (:price %)))
                               prices)))))))
 
 (def buy (shares-fn #(+ % 100)))
@@ -231,14 +230,14 @@
     (send-message com-m (str nick ": You don't have a margin account!"))))
 
 (def delist
-  (fn [{:keys [nick com channel args] :as com-m}]
+  (fn [{:keys [nick com args] :as com-m}]
     (when-privs
      com-m :admin
      (let [stock (or (first args) nick)]
-       (delist-price com-m stock (:server @com) channel)
+       (delist-stock com-m stock (:server @com))
        (send-message
         com-m
-        (str nick ": " stock " has been delisted from the " channel " exchange."))))))
+        (str nick ": " stock " has been delisted from the exchange."))))))
 
 
 (defplugin
