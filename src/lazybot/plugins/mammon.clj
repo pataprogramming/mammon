@@ -273,6 +273,16 @@
            com-m
            (str nick ": " stock " has not been seen, and cannot be bought or sold."))))))
 
+(def dtest
+  (fn [{:keys [nick com args] :as com-m}]
+    (when-privs
+     com-m :admin
+     (let [results (fetch :test :where {"shares.baz" {:$exists true}})]
+       (send-message
+        com-m
+        (str nick ": Test results: " (s/join "; " (map str results)))))
+     )))
+
 (defplugin
   (:cmd
    "Checks the shares of a stock that you own."
@@ -297,8 +307,11 @@
    #{"delist"} delist)
   (:cmd
    "Check whether a symbol is a nick that has been seen on this server."
-   #{"validate"} validate)
+   #{"dtest"} dtest)
   (:cmd
+   "Development database testing command. (Admin-only)"
+   #{"dtest"} dtest)
+ (:cmd
    "Issue a sell-short order. (Unimplemented)"
    #{"short"} margin-order)
   (:cmd
