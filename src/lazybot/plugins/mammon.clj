@@ -63,6 +63,8 @@
                                   :where (key-attrs nick server))]
     stock-map))
 
+;; FIXME: Should delisting a stock should return its current value to
+;; any owners' accounts?
 (defn- delist-stock
   [com-m nick server]
   (println "delisting: " (destroy! :shares {:stock nick :server server}))
