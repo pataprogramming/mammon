@@ -3,6 +3,9 @@
 ;;; by Michael D. Ivey <ivey@gweezlebur.com>
 ;;; Licensed under the EPL
 
+;;; Relies on 'seen' plugin from base lazybot distribution to
+;;; validate that a symbol is a legitimate nick
+
 (ns lazybot.plugins.mammon
   (:use [lazybot registry info]
         [lazybot.plugins.login :only [when-privs]]
@@ -18,7 +21,12 @@
     2    (str (first s) " and " (second s))
     (str (s/join ", " (butlast s)) " and " (last s))))
 
-(defn fmt-currency
+(defn- validate-stock [nick server]
+  (when-let [seen-map (fetch-one :seen :where {:nick (.toLowerCase nick)
+                                               :server server})]
+    seen-map))
+
+(defn- fmt-currency
   [amount]
   (str "\u20b1" (format "%.2f" amount)))
 
@@ -49,6 +57,12 @@
       (destroy! :price attrs)
       (update! :price attrs (assoc attrs :price price)))))
 
+(defn- stock-exists?
+  [com-m nick server]
+  (when-let [stock-map (fetch-one :price
+                                  :where (key-attrs nick server))]
+    stock-map))
+
 (defn- delist-stock
   [com-m nick server]
   (println "delisting: " (destroy! :shares {:stock nick :server server}))
@@ -60,7 +74,8 @@
                             :where (key-attrs nick server))
         db-price (get user-map :price 0.0)
         _ (println "Got price " db-price " for " nick)
-        price    (if (= db-price 0.0)
+        price    (if (and (validate-stock nick server)
+                          (= db-price 0.0))
                    (let [ipo-price (rand-price)]
                      (set-price com-m nick (:server @com) ipo-price)
                      (send-message com-m
@@ -137,14 +152,20 @@
     (let [stock (first args)
           shares (get-shares nick (:server @com) stock)
           new-shares (f shares)]
-      (let [old-price   (get-price com-m stock (:server @com))
-            price-delta (+ 0.01 (/ (rand-int 100) 100.0))]
-        (cond
-         (< new-shares shares) (set-price com-m stock (:server @com)
-                                          (max 0.01 (- old-price price-delta)))
-         (> new-shares shares) (set-price com-m stock (:server @com)
-                                          (max 0.01 (+ old-price price-delta)))))
-      (change-shares stock new-shares com-m))))
+      (if (validate-stock stock (:server @com))
+        (do
+          (let [old-price   (get-price com-m stock (:server @com))
+                price-delta (+ 0.01 (/ (rand-int 100) 100.0))]
+            (cond
+             (< new-shares shares) (set-price com-m stock (:server @com)
+                                              (max 0.01 (- old-price price-delta)))
+             (> new-shares shares) (set-price com-m stock (:server @com)
+                                              (max 0.01 (+ old-price price-delta)))))
+          (when (not= new-shares shares)
+            (change-shares stock new-shares com-m)))
+        (send-message
+           com-m
+           (str nick ": " stock " has not been seen, and cannot be bought or sold."))))))
 
 (defn total-value
   [com-m stocks]
@@ -202,13 +223,13 @@
       (send-message
        com-m
        (let [owners (get-ownership nick (:server @com) stock)]
-         (if (> (count owners) 0)
-           ;; FIXME: Grammar case for single user
+         (case (count owners)
+           0 (str nick ": No users own shares in \u00a7" stock ".")
+           1 (str nick ": The only user who owns shares in \u00a7" stock
+                  " is " (fmt-owner (first owners)))
            (str nick ": The users who own shares in \u00a7" stock " are "
-                (oxford-list
-                 (map fmt-owner (reverse (sort-by :shares owners))))
-                ".")
-           (str nick ": No users own shares in \u00a7" stock ".")))))))
+                (oxford-list (map fmt-owner (reverse (sort-by :shares owners))))
+                ".")))))))
 
 (def print-ticker
   (fn [{:keys [nick com bot args] :as com-m}]
@@ -239,6 +260,16 @@
         com-m
         (str nick ": " stock " has been delisted from the exchange."))))))
 
+(def validate
+  (fn [{:keys [nick com args] :as com-m}]
+      (let [stock (or (first args) nick)]
+        (if (validate-stock stock (:server @com))
+          (send-message
+           com-m
+           (str nick ": " stock " is a legal symbol."))
+          (send-message
+           com-m
+           (str nick ": " stock " has not been seen, and cannot be bought or sold."))))))
 
 (defplugin
   (:cmd
@@ -262,6 +293,9 @@
   (:cmd
    "Remove a symbol from the exchange. (Admin-only)"
    #{"delist"} delist)
+  (:cmd
+   "Check whether a symbol is a nick that has been seen on this server."
+   #{"validate"} validate)
   (:cmd
    "Issue a sell-short order. (Unimplemented)"
    #{"short"} margin-order)
