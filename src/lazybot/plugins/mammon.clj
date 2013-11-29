@@ -21,7 +21,7 @@
     2    (str (first s) " and " (second s))
     (str (s/join ", " (butlast s)) " and " (last s))))
 
-(defn- validate-stock [nick server]
+(defn- validate-nick [nick server]
   (when-let [seen-map (fetch-one :seen :where {:nick (.toLowerCase nick)
                                                :server server})]
     seen-map))
@@ -38,6 +38,11 @@
      (let [nick  (.toLowerCase nick)
            stock (.toLowerCase stock)]
        (keyed [nick server stock ]))))
+
+(defn- create-account
+  [nick server]
+  (let [attrs (key-attrs nick server)]
+    (update!)))
 
 (defn- set-shares
   [nick server stock shares]
@@ -70,13 +75,17 @@
   (println "delisting: " (destroy! :shares {:stock nick :server server}))
   (set-price com-m nick server 0))
 
+(defn- wipe-account
+  [com-m nick server]
+  (println "wiping: " (destroy! :shares {:nick (.toLowerCase nick) :server server})))
+
 (defn- get-price
   [{:keys [com] :as com-m} nick server]
   (let [user-map (fetch-one :price
                             :where (key-attrs nick server))
         db-price (get user-map :price 0.0)
         _ (println "Got price " db-price " for " nick)
-        price    (if (and (validate-stock nick server)
+        price    (if (and (validate-nick nick server)
                           (= db-price 0.0))
                    (let [ipo-price (rand-price)]
                      (set-price com-m nick (:server @com) ipo-price)
@@ -108,7 +117,43 @@
                           :where (key-attrs nick server))]
     stock-maps))
 
+(defn- fetch-account
+  [nick server]
+  (let [account (fetch-one :accounts
+                           :where (key-attrs nick server))]
+    account))
+
+(defn- get-account-stocks
+  [nick server]
+  (let [account (fetch-account nick server)]
+    (println "ACCOUNT: " account)
+    (:shares account)))
+
+(defn- get-account-ownership
+  [nick server stock]
+  (let [stock       (.toLowerCase stock)
+        stock-field (str "shares." stock)
+        accounts    (fetch :accounts
+                           :where {:server server
+                                   stock-field { :$gt 0 } })
+        owners-map  (reduce #(assoc %1
+                               (:nick %2)
+                               (get-in %2 [:shares (keyword stock)]))
+                            {}
+                            accounts)]
+    ;; (println "ACCOUNTS got" accounts "for stock" stock)
+    ;; (println "OWNERS-MAP got" owners-map "for stock" stock)
+    owners-map))
+
+
+
 (defn- get-shares
+  [nick server stock]
+  (let [stock-map (fetch-one :shares
+                            :where (key-attrs nick server stock))]
+    (get stock-map :shares 0)))
+
+(defn- get-account-shares
   [nick server stock]
   (let [stock-map (fetch-one :shares
                             :where (key-attrs nick server stock))]
@@ -147,14 +192,19 @@
   [{:keys [nick shares]}]
   (str "\u00a7" nick " (" shares ")"))
 
+(defn- fmt-account-owner
+  [[nick shares]]
+  (str "\u00a7" nick " (" shares ")"))
+
 (defn shares-fn
   "Create a plugin command function that applies f to the stock owned by the user specified in args."
   [f]
   (fn [{:keys [nick com args] :as com-m}]
     (let [stock (first args)
           shares (get-shares nick (:server @com) stock)
-          new-shares (f shares)]
-      (if (validate-stock stock (:server @com))
+          new-shares (f shares)
+          new-shares (if (< new-shares 0) 0 new-shares)]
+      (if (validate-nick stock (:server @com))
         (do
           (let [old-price   (get-price com-m stock (:server @com))
                 price-delta (+ 0.01 (/ (rand-int 100) 100.0))]
@@ -163,7 +213,10 @@
                                               (max 0.01 (- old-price price-delta)))
              (> new-shares shares) (set-price com-m stock (:server @com)
                                               (max 0.01 (+ old-price price-delta)))))
-          (when (not= new-shares shares)
+          (if (= new-shares shares)
+            (send-message
+             com-m
+             (str nick ": No shares bought or sold."))
             (change-shares stock new-shares com-m)))
         (send-message
            com-m
@@ -173,6 +226,11 @@
   [com-m stocks]
   (reduce + (map #(* (:shares %)
                      (get-price com-m (:stock %) (:server %))) stocks)))
+
+(def print-account-portfolio
+  (fn [{:keys [nick com bot args] :as com-m}]
+    (let [server (:server @com)]
+      )))
 
 (def print-portfolio
   (fn [{:keys [nick com bot args] :as com-m}]
@@ -233,6 +291,20 @@
                 (oxford-list (map fmt-owner (reverse (sort-by :shares owners))))
                 ".")))))))
 
+(def print-account-ownership
+  (fn [{:keys [nick com bot args] :as com-m}]
+    (let [stock (or (first args) nick)]
+      (send-message
+       com-m
+       (let [owners (get-account-ownership nick (:server @com) stock)]
+         (case (count owners)
+           0 (str nick ": No users own shares in \u00a7" stock ".")
+           1 (str nick ": The only user who owns shares in \u00a7" stock
+                  " is " (fmt-account-owner (first owners)))
+           (str nick ": The users who own shares in \u00a7" stock " are "
+                (oxford-list (map fmt-account-owner (reverse (sort-by val owners))))
+                ".")))))))
+
 (def print-ticker
   (fn [{:keys [nick com bot args] :as com-m}]
     (let [prices (get-market (:server @com))]
@@ -262,6 +334,16 @@
         com-m
         (str nick ": " stock " has been delisted from the exchange."))))))
 
+(def wipe
+  (fn [{:keys [nick com args] :as com-m}]
+    (when-privs
+     com-m :admin
+     (let [account (first args)]
+       (wipe-account com-m account (:server @com))
+       (send-message
+        com-m
+        (str nick ": " account "'s account has been wiped."))))))
+
 (def validate
   (fn [{:keys [nick com args] :as com-m}]
       (let [stock (or (first args) nick)]
@@ -273,15 +355,39 @@
            com-m
            (str nick ": " stock " has not been seen, and cannot be bought or sold."))))))
 
+(defn- reschema
+  [com-m]
+  (let [share-maps (fetch :shares)
+        stringified (str "results: "
+                         (s/join "; " (map #(str (:nick %) ":" (:stock %) ":"
+                                                 (:shares %))
+                                           share-maps)))]
+    ;(println "shares: " stringified)
+    (destroy! :accounts {})
+    (doseq [sm share-maps]
+      (update! :accounts
+               {:nick (:nick sm) :server (:server sm)}
+               {:$set {(str "shares." (:stock sm)) (:shares sm)}}))
+    (str "accounts: " (s/join "; " (map str (fetch :accounts))))))
+
+
 (def dtest
   (fn [{:keys [nick com args] :as com-m}]
     (when-privs
      com-m :admin
-     (let [results (fetch :test :where {"shares.baz" {:$exists true}})]
+     (let [;results (fetch :test :where {"shares.baz" {:$exists true}})
+           results (reschema com-m)
+           owners (get-account-ownership nick (:server @com) nick)
+           ]
+       ;(println "dtest results: " results)
+       ;(println "stocks: " (get-account-stocks nick (:server @com)))
+       ;(println "owners: " (get-account-ownership nick (:server @com) nick))
        (send-message
-        com-m
-        (str nick ": Test results: " (s/join "; " (map str results)))))
-     )))
+       com-m
+       (str nick ": " owners)
+       (print-account-ownership com-m)
+        ;(str nick ": Test results: " (s/join "; " (map str results)))
+       )))))
 
 (defplugin
   (:cmd
@@ -305,6 +411,9 @@
   (:cmd
    "Remove a symbol from the exchange. (Admin-only)"
    #{"delist"} delist)
+  (:cmd
+   "Wipe a user's account from the database. (Admin-only)"
+   #{"wipe"} wipe)
   (:cmd
    "Check whether a symbol is a nick that has been seen on this server."
    #{"dtest"} dtest)

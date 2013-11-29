@@ -1,0 +1,32 @@
+* TODO Accounts
+** TODO Track currency
+** TODO Only allow accounts for nickserv-authenticated users
+* TODO Shares
+** TODO Only allow buying if enough funds
+** TODO Buy and sell specific numbers of shares
+** TODO Default to 1 share as a 'karma comment'
+* TODO Ideas
+** TODO Stocks
+*** TODO Selling short
+*** TODO Buy/Sell orders
+** TODO Commodities
+** TODO Forex
+*** TODO Channels
+Add back in channels, but just for purposes of filtering
+*** TODO Different channel currencies
+*** MAYBE Track user's primary channel?
+* TODO Market dynamics
+** TODO Random Walk
+Timeframe for updates?
+** TODO Volatility
+
+Arbitrary announcement? Swing by large amounts?
+
+** TODO Sentiment (bias)
+** TODO Traffic volume (bias)
+** TODO Shares bought/sold (bias)
+* TODO Visualization and Tracking Website
+*** TODO Show list of stocks and current prices
+*** TODO Show percentage change over time periods
+*** TODO Charts!
+*** TODO Biggest losers/gainers
